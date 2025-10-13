@@ -219,6 +219,7 @@ data/raw/*.grib2
 data/processed/*.nc
 data/processed/*.pkl
 data/processed/*.parquet
+data*
 
 # Ignore model output files
 results/figures/*.png
