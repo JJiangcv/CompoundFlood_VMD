@@ -209,16 +209,7 @@ __marimo__/
 # ==========================================
 # Project-specific: Compound Flood Analysis
 # ==========================================
-data/raw/*.nc
-data/raw/*.tif
-data/raw/*.tiff
-data/raw/*.hdf
-data/raw/*.h5
-data/raw/*.grib
-data/raw/*.grib2
-data/processed/*.nc
-data/processed/*.pkl
-data/processed/*.parquet
+
 data*
 
 # Ignore model output files
