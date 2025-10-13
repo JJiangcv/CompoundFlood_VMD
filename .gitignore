@@ -205,3 +205,31 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ==========================================
+# Project-specific: Compound Flood Analysis
+# ==========================================
+data/raw/*.nc
+data/raw/*.tif
+data/raw/*.tiff
+data/raw/*.hdf
+data/raw/*.h5
+data/raw/*.grib
+data/raw/*.grib2
+data/processed/*.nc
+data/processed/*.pkl
+data/processed/*.parquet
+
+# Ignore model output files
+results/figures/*.png
+results/figures/*.pdf
+results/figures/*.jpg
+results/tables/*.csv
+results/tables/*.xlsx
+results/models/*.pkl
+results/models/*.joblib
+
+# Slurm job outputs (如果使用 HPC)
+slurm-*.out
+*.o[0-9]*
+*.e[0-9]*
