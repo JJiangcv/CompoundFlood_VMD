@@ -3,12 +3,12 @@ from pathlib import Path
 import pandas as pd
 import sys
 try:
-    # 方式1：作为模块运行 -> python -m src.main
+    # mode 1: run as module -> python -m src.main
     from . import io as cio
     from . import plot as cplots
 except Exception:
-    # 方式2：直接脚本运行 -> python src/main.py
-    ROOT = Path(__file__).resolve().parents[1]  # 项目根：CompoundFlood_vmd/
+    # mode 2: run as script -> python src/main.py
+    ROOT = Path(__file__).resolve().parents[1]  # project root
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from src import io as cio
