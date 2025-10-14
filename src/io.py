@@ -16,28 +16,28 @@ __author__ = "Jinghua Jiang"
 __email__ = "jinghua.jiang21@gmail.com"
 __version__ = "0.1.0"
 
-#----------------------------------------------------------------------
-# Imports
-#----------------------------------------------------------------------
+
 import os
-import numpy as np
 import pandas as pd
+from typing import Dict
 
 #----------------------------------------------------------------------
 # Functions
 #----------------------------------------------------------------------
-def load_source_data(file_path, date_col=None, value_col=None, dayfirst=True):
+def load_source_data(file_path, date_col=None, value_col=None, dayfirst=True, rename_value_to=None):
     """
     Load source data from a CSV file.
 
     Parameters:
-        file_path (str): Path to the CSV file.
-        date_col (str): Name of the date column. Defaults to 'timestamp'.   
-        value_col (str): Name of the value column. Defaults to 'value'.
+        file_path (str or Path): Path to the CSV file.
+        date_col (str): Name of the date column. Defaults to auto-detect.
+        value_col (str): Name of the value column. Defaults to auto-detect.
         dayfirst (bool): Whether the date format is day-first. Defaults to True.
-
+        rename_value_to (str): If provided, rename the value column to this name.
+                              Useful for avoiding merge conflicts.
     Returns:
-        pd.DataFrame: DataFrame containing the source data.
+        pd.DataFrame: DataFrame with columns ['timedate', 'value'] or 
+                      ['timedate', <rename_value_to>].
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
@@ -49,13 +49,12 @@ def load_source_data(file_path, date_col=None, value_col=None, dayfirst=True):
             if c in df.columns:
                 date_col = c; break
         if date_col is None:
-            # 再随便找一个名字里含 time/date 的列
             for c in df.columns:
                 lc = c.lower()
                 if "time" in lc or "date" in lc:
                     date_col = c; break
     if date_col is None:
-        raise ValueError("未找到时间列，请传入 date_col。")
+        raise ValueError("Could not find date column. Please specify date_col.")
 
     # 2) select value column
     if value_col is None:
@@ -70,7 +69,7 @@ def load_source_data(file_path, date_col=None, value_col=None, dayfirst=True):
                 if pd.api.types.is_numeric_dtype(df[c]):
                     value_col = c; break
     if value_col is None:
-        raise ValueError("未找到数值列，请传入 value_col。")
+        raise ValueError("Could not find value column. Please specify value_col.")
 
     # 3) parse date and value columns
     out = pd.DataFrame({
@@ -78,6 +77,10 @@ def load_source_data(file_path, date_col=None, value_col=None, dayfirst=True):
         "value":    pd.to_numeric(df[value_col], errors="coerce"),
     }).dropna().sort_values("timedate").reset_index(drop=True)
 
+    # 4) Rename if requested
+    if rename_value_to:
+        out = out.rename(columns={"value": rename_value_to})
+    
     return out
 
 def merge_source_data(ds, rename_map=None):
@@ -93,11 +96,55 @@ def merge_source_data(ds, rename_map=None):
     """
     series_list = []
     for name, df in ds.items():
-        s = (
-            df.set_index("timedate")["value"].groupby("timedate").mean().rename(name)
-        )
+        # Check if df has 'value' column (output from load_source_data)
+        if "value" in df.columns:
+            s = (
+                df.set_index("timedate")["value"]
+                .groupby("timedate").mean()
+                .rename(name)
+            )
+        else:
+            # Use the non-timedate column
+            value_col = [c for c in df.columns if c != "timedate"][0]
+            s = (
+                df.set_index("timedate")[value_col]
+                .groupby("timedate").mean()
+                .rename(name)
+            )
         series_list.append(s)
+    
     merged_df = pd.concat(series_list, axis=1, join='inner').sort_index()
+    
     if rename_map:
-        merged_df = merged_df.rename(columns=rename_map)  
+        merged_df = merged_df.rename(columns=rename_map)
+    
     return merged_df.reset_index()
+
+def prepare_for_plotting(data_dict: Dict[str, pd.DataFrame],
+                        include_wl: bool = True) -> Dict[str, pd.DataFrame]:
+    """
+    Prepare data for the plotting functions which expect 'value' column.
+    
+    Parameters:
+        data_dict (dict): Dictionary from load_compound_flood_data.
+        include_wl (bool): Whether to include water level as "water level".
+    
+    Returns:
+        dict: Dictionary ready for plot functions.
+    """
+    plot_dict = {}
+    
+    # Rename columns back to 'value' for plotting
+    if "rain" in data_dict:
+        plot_dict["rain"] = data_dict["rain"].rename(columns={"rain": "value"})
+    
+    if "tide" in data_dict:
+        plot_dict["tide"] = data_dict["tide"].rename(columns={"tide": "value"})
+    
+    if "flow" in data_dict:
+        plot_dict["flow"] = data_dict["flow"].rename(columns={"flow": "value"})
+    
+    if include_wl and "wl" in data_dict:
+        plot_dict["water level"] = data_dict["wl"].rename(columns={"wl": "value"})
+    
+    return plot_dict

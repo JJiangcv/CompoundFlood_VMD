@@ -17,7 +17,6 @@ __email__ = "jinghua.jiang21@gmail.com"
 __version__ = "0.1.0"
 
 # src/lag.py
-from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
@@ -29,18 +28,19 @@ LagMethod = Literal["pearson", "spearman", "kendall"]
 __all__ = [
     "LagResult",
     "estimate_forward_lags",
-    "apply_lags and align",
-    "pick_pot_events_on_df",
-    "corrbest_positive_fixedwindow"
+    "apply_lags_and_align",
+    "pick_pot_events",
+    "pot_forward_lag_analysis",
+    "multi_pot_forward_lag_analysis"
 ]
 
 
 @dataclass
 class LagResult:
     target: str
-    best_lag: Dict[str, int]  # variable -> lag in days 
-    coor_at_best: Dict[str, float]  # variable -> correlation at best lag
-    coor_curve: Dict[str, Tuple[np.ndarray, np.ndarray]]  # variable -> correlation curve (lag vs correlation)
+    best_lags: Dict[str, int]  # variable -> lag in days
+    corr_at_best: Dict[str, float]  # variable -> correlation at best lag
+    corr_curve: Dict[str, Tuple[np.ndarray, np.ndarray]]  # variable -> correlation curve (lag vs correlation)
 
 #----------------------------------------------------------------------
 # method 1: global cross-correlation function (CCF) approach
@@ -112,12 +112,12 @@ def estimate_forward_lags(
 
     y = df[target]
     best_lags: Dict[str, int] = {}
-    coor_at_bests: Dict[str, float] = {}
-    coor_curves: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}  
+    corr_at_best: Dict[str, float] = {}
+    corr_curve: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
 
     for drv in drivers:  
         lags, corrs = _forward_ccf_shift(df[drv], y, max_lag_days, method, min_overlap)
-        coor_curves[drv] = (lags, corrs)
+        corr_curve[drv] = (lags, corrs)
 
         c_use = corrs.copy()
         if positive_only:
@@ -126,15 +126,15 @@ def estimate_forward_lags(
         if np.isfinite(c_use).any():
             idx_max = int(np.nanargmax(c_use))
             best_lags[drv] = int(lags[idx_max])
-            coor_at_bests[drv] = float(corrs[idx_max])
+            corr_at_best[drv] = float(corrs[idx_max])
         else:
             best_lags[drv] = 0
-            coor_at_bests[drv] = np.nan
+            corr_at_best[drv] = np.nan
     return LagResult(
         target=target,
         best_lags=best_lags,
-        corr_at_best=coor_at_bests,
-        corr_curve=coor_curves
+        corr_at_best=corr_at_best,
+        corr_curve=corr_curve
     )
 
 def apply_lags_and_align(
@@ -219,293 +219,6 @@ def pick_pot_events(
             i += 1
     return events, threshold
 
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-File: lag.py
-Created: 2025-10-13
-Author: Jinghua Jiang <jinghua.jiang21@gmail.com>
-Project: Compound Flood VMD
-
-Description:
-    Forward-only lag analysis utilities for compound flood analysis.
-    
-    Key concept: Only forward lags (L >= 0) are considered, where the driver
-    leads the target. This is appropriate for causal analysis where we want
-    to understand how drivers (tide, flow) precede responses (water level).
-
-License: MIT
-"""
-
-__author__ = "Jinghua Jiang"
-__email__ = "jinghua.jiang21@gmail.com"
-__version__ = "0.3.0"
-
-from __future__ import annotations
-from dataclasses import dataclass
-from typing import Dict, List, Literal, Tuple, Optional
-
-import numpy as np
-import pandas as pd
-from scipy.stats import spearmanr, pearsonr, kendalltau
-
-LagMethod = Literal["pearson", "spearman", "kendall"]
-
-__all__ = [
-    "LagResult",
-    "estimate_forward_lags",
-    "apply_lags_and_align",
-    "pick_pot_events",
-    "pot_forward_lag_analysis",
-    "multi_pot_forward_lag_analysis",
-]
-
-#----------------------------------------------------------------------
-# Data Structures
-#----------------------------------------------------------------------
-
-@dataclass
-class LagResult:
-    """
-    Result container for forward lag analysis.
-    
-    Attributes:
-        target (str): Name of the target variable.
-        best_lags (Dict[str, int]): Best forward lag (days) for each driver.
-        corr_at_best (Dict[str, float]): Correlation value at best lag for each driver.
-        corr_curve (Dict[str, Tuple[np.ndarray, np.ndarray]]): 
-            Full correlation curves as (lags, correlations) for each driver.
-    """
-    target: str
-    best_lags: Dict[str, int]
-    corr_at_best: Dict[str, float]
-    corr_curve: Dict[str, Tuple[np.ndarray, np.ndarray]]
-
-#----------------------------------------------------------------------
-# Global Forward Lag Analysis
-#----------------------------------------------------------------------
-
-def _forward_ccf_shift(
-    driver: pd.Series,
-    target: pd.Series,
-    max_lag: int,
-    method: LagMethod = "spearman",
-    min_overlap: int = 10,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Calculate forward cross-correlation: driver leads target by L = 0..max_lag days.
-    
-    Implementation: shift driver by L and correlate with target.
-    
-    Parameters:
-        driver (pd.Series): Driver time series (e.g., tide, flow).
-        target (pd.Series): Target time series (e.g., water level).
-        max_lag (int): Maximum forward lag to test.
-        method (LagMethod): Correlation method - 'pearson', 'spearman', or 'kendall'.
-        min_overlap (int): Minimum number of valid pairs required.
-        
-    Returns:
-        tuple: (lags array, correlations array) where lags = 0..max_lag
-    """
-    lags = np.arange(0, max_lag + 1, dtype=int)
-    corrs = np.full_like(lags, np.nan, dtype=float)
-    
-    driver = pd.to_numeric(driver, errors="coerce")
-    target = pd.to_numeric(target, errors="coerce")
-    
-    for i, L in enumerate(lags):
-        x = driver.shift(L)  # driver leads by L days
-        y = target
-        df = pd.concat([x, y], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
-        if len(df) < min_overlap:
-            continue
-        corrs[i] = df.iloc[:, 0].corr(df.iloc[:, 1], method=method)
-    
-    return lags, corrs
-
-
-def estimate_forward_lags(
-    df_wide: pd.DataFrame,
-    target: str,
-    drivers: List[str],
-    max_lag_days: int = 30,
-    method: LagMethod = "spearman",
-    min_overlap: int = 10,
-    positive_only: bool = True,
-    time_col: str = "timedate",
-) -> LagResult:
-    """
-    Global method: scan forward lags L=0..max_lag on the entire time series
-    to find a representative lag for each driver.
-    
-    This method treats the entire time series as one sample and finds the
-    single best lag that maximizes correlation between driver and target.
-    
-    Parameters:
-        df_wide (pd.DataFrame): Wide-format DataFrame with time and variable columns.
-        target (str): Name of the target variable column.
-        drivers (List[str]): List of driver variable column names.
-        max_lag_days (int): Maximum forward lag to search (days). Defaults to 30.
-        method (LagMethod): Correlation method. Defaults to 'spearman'.
-        min_overlap (int): Minimum valid pairs required. Defaults to 10.
-        positive_only (bool): Only consider positive correlations. If True and all
-                              correlations are ≤0, returns lag=0 with r=NaN. Defaults to True.
-        time_col (str): Name of the time column. Defaults to 'timedate'.
-        
-    Returns:
-        LagResult: Object containing best lags, correlations, and full curves.
-        
-    Example:
-        >>> result = estimate_forward_lags(df, target='wl', drivers=['tide', 'flow'])
-        >>> print(f"Tide best lag: {result.best_lags['tide']} days")
-        >>> print(f"Correlation: {result.corr_at_best['tide']:.3f}")
-    """
-    # Sort and set index
-    if time_col in df_wide.columns:
-        df = df_wide.sort_values(time_col).reset_index(drop=True).set_index(time_col)
-    else:
-        df = df_wide.sort_index()
-    
-    y = df[target]
-    best_lags: Dict[str, int] = {}
-    corr_at_best: Dict[str, float] = {}
-    curves: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
-    
-    for drv in drivers:
-        lags, corrs = _forward_ccf_shift(
-            df[drv], y, max_lag=max_lag_days, method=method, min_overlap=min_overlap
-        )
-        curves[drv] = (lags, corrs)
-        
-        # Find best lag
-        c_use = corrs.copy()
-        if positive_only:
-            c_use[c_use <= 0] = np.nan
-        
-        if np.isfinite(c_use).any():
-            j = int(np.nanargmax(c_use))
-            best_lags[drv] = int(lags[j])
-            corr_at_best[drv] = float(corrs[j])
-        else:
-            best_lags[drv] = 0
-            corr_at_best[drv] = np.nan
-    
-    return LagResult(
-        target=target,
-        best_lags=best_lags,
-        corr_at_best=corr_at_best,
-        corr_curve=curves
-    )
-
-
-def apply_lags_and_align(
-    df_wide: pd.DataFrame,
-    lags: Dict[str, int],
-    time_col: str = "timedate",
-    dropna: bool = True,
-) -> pd.DataFrame:
-    """
-    Apply forward lags to specified columns and align by common dates.
-    
-    Convention: positive lag means driver leads, so we shift(+L) the driver column.
-    
-    Parameters:
-        df_wide (pd.DataFrame): Wide-format DataFrame with time and variable columns.
-        lags (Dict[str, int]): Dictionary mapping column names to their forward lags.
-        time_col (str): Name of the time column. Defaults to 'timedate'.
-        dropna (bool): Whether to drop rows with any NaN values. Defaults to True.
-        
-    Returns:
-        pd.DataFrame: DataFrame with lagged columns aligned by time.
-        
-    Example:
-        >>> lags = {'tide': 2, 'flow': 5}  # tide leads by 2 days, flow by 5
-        >>> aligned = apply_lags_and_align(df, lags)
-        >>> # Now aligned['tide'] at day t corresponds to original tide at day t+2
-    """
-    if time_col in df_wide.columns:
-        df = df_wide.sort_values(time_col).reset_index(drop=True).set_index(time_col)
-    else:
-        df = df_wide.sort_index()
-    
-    out = {
-        col: (df[col].shift(lags[col]) if col in lags else df[col])
-        for col in df.columns
-    }
-    aligned = pd.DataFrame(out, index=df.index).reset_index()
-    aligned = aligned.rename(columns={df.index.name or time_col: time_col})
-    
-    return aligned.dropna() if dropna else aligned
-
-#----------------------------------------------------------------------
-# POT Event Detection
-#----------------------------------------------------------------------
-
-def pick_pot_events(
-    df: pd.DataFrame,
-    value_col: str,
-    quantile: float = 0.90,
-    min_separation_days: int = 3,
-    time_col: str = "timedate",
-) -> Tuple[List[pd.Timestamp], float]:
-    """
-    Detect Peaks Over Threshold (POT) events with declustering.
-    
-    Declustering: within each min_separation_days window, only the maximum
-    value is retained as the event time.
-    
-    Parameters:
-        df (pd.DataFrame): DataFrame containing the time series.
-        value_col (str): Name of the value column to analyze.
-        quantile (float): Quantile threshold for POT (0-1). Defaults to 0.90.
-        min_separation_days (int): Minimum days between independent events. Defaults to 3.
-        time_col (str): Name of the time column. Defaults to 'timedate'.
-        
-    Returns:
-        tuple: (list of event timestamps, threshold value)
-        
-    Example:
-        >>> events, threshold = pick_pot_events(df, 'flow', quantile=0.95)
-    """
-    threshold = float(np.nanpercentile(df[value_col].values, quantile * 100.0))
-    
-    candidates = (
-        df.loc[df[value_col] > threshold, [time_col, value_col]]
-        .sort_values(time_col)
-        .reset_index(drop=True)
-    )
-    
-    if candidates.empty:
-        return [], threshold
-    
-    events: List[pd.Timestamp] = []
-    min_sep = pd.Timedelta(days=min_separation_days)
-    last_event_time = pd.Timestamp.min
-    
-    i = 0
-    while i < len(candidates):
-        t0 = candidates.loc[i, time_col]
-        if t0 >= last_event_time + min_sep:
-            # Find maximum within min_separation_days window
-            window = candidates[
-                (candidates[time_col] >= t0) & 
-                (candidates[time_col] < t0 + min_sep)
-            ]
-            j = window[value_col].idxmax()
-            event_time = candidates.loc[j, time_col]
-            events.append(event_time)
-            last_event_time = event_time
-            i = j + 1
-        else:
-            i += 1
-    
-    return events, threshold
-
-#----------------------------------------------------------------------
-# POT Event-Driven Forward Lag Analysis
-#----------------------------------------------------------------------
-
 def pot_forward_lag_analysis(
     df: pd.DataFrame,
     anchor_col: str,
@@ -564,7 +277,7 @@ def pot_forward_lag_analysis(
     # Get POT values for percentile calculation
     pot_vals = ts[anchor_col][ts[anchor_col] > threshold].dropna()
 
-    # Analyze each event
+    # Analyse each event
     results=[]
     for event_time in events:
         window_end = event_time + pd.Timedelta(days=fixed_window_days)
@@ -585,7 +298,7 @@ def pot_forward_lag_analysis(
         # Search for best forward lag
         x_all = segment[anchor_col].to_numpy()
         y_all = segment[target_col].to_numpy()
-        best_lag, best_corr, best_n_pairs = np.nan, np.nan, 0
+        best_lags, best_corr, best_n_pairs = np.nan, np.nan, 0
         for L in range(0, max_lag + 1):
             if L == 0:
                 xs = x_all
@@ -606,7 +319,7 @@ def pot_forward_lag_analysis(
                 if positive_only and r <= 0:
                     continue
                 if np.isnan(best_corr) or r > best_corr:
-                    best_lag = int(L)
+                    best_lags = int(L)
                     best_corr = r
                     best_n_pairs = int(n_valid)
         results.append({
@@ -615,7 +328,7 @@ def pot_forward_lag_analysis(
             "threshold_value": threshold,
             "event_value": float(event_value) if pd.notna(event_value) else np.nan,
             "event_percentile_in_POT": event_percentile,
-            "best_lag_days": best_lag,
+            "best_lag_days": best_lags,
             "best_correlation": best_corr,
             "n_valid_pairs": best_n_pairs,
             "fixed_window_days": fixed_window_days,
@@ -710,3 +423,24 @@ def multi_pot_forward_lag_analysis(
     summary_df = pd.DataFrame(summary_rows)
     
     return event_results, summary_df
+
+def run_pot_lag_analysis(driver_name, target_name, driver_df, target_df, 
+                        quantiles, config, output_dir, verbose=True):
+    """
+    Run POT lag analysis and save results.
+    """
+    merged = pd.merge(driver_df, target_df, on="timedate").dropna()
+
+    events_dict, summary = multi_pot_forward_lag_analysis(
+        merged, driver_name, target_name, quantiles, **config
+    )
+    
+
+    for q, events_df in events_dict.items():
+        events_df.to_csv(output_dir / f"{driver_name}_events_q{int(q*100)}.csv")
+    summary.to_csv(output_dir / f"{driver_name}_pot_summary.csv")
+    
+    if verbose:
+        print(summary)
+    
+    return summary
