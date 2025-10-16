@@ -270,7 +270,7 @@ def pot_forward_lag_analysis(
         df[[time_col, anchor_col, target_col]]
         .dropna()
         .sort_values(time_col)
-        .set_index(time_col)
+        .set_index(pd.to_datetime(df[time_col]).dt.normalize())
         .asfreq("D")
     )
 
@@ -280,8 +280,9 @@ def pot_forward_lag_analysis(
     # Analyse each event
     results=[]
     for event_time in events:
-        window_end = event_time + pd.Timedelta(days=fixed_window_days)
-        segment = ts.loc[event_time:window_end]
+        event_date = pd.to_datetime(event_time).normalize()  
+        window_end = event_date + pd.Timedelta(days=fixed_window_days)
+        segment = ts.loc[event_date:window_end]
         if segment.empty:
             continue    
         try:

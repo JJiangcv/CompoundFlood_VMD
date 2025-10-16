@@ -7,6 +7,7 @@ try:
     from . import io as cio
     from . import plot as cplots
     from . import lag as clag
+    from . import dataset as cd
 except Exception:
     # mode 2: run as script -> python src/main.py
     ROOT = Path(__file__).resolve().parents[1]  # project root
@@ -15,6 +16,7 @@ except Exception:
     from src import io as cio
     from src import plot as cplots
     from src import lag as clag
+    from src import dataset as cd
 
 # Paths
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -209,28 +211,21 @@ for name, df_data in [("Tide", tide), ("Flow", flow)]:
         )
         print(f"  Q{int(q*100)}: {len(events):3d} 事件, 阈值 = {threshold:.2f}")
 
-#=============================================================================
-# 完成
-#=============================================================================
 
-print("\n" + "="*70)
-print("分析完成！")
-print("="*70)
-print(f"\n输出目录:")
-print(f"  主目录: {OUTPUT_DIR}")
-print(f"  滞后分析: {OUTPUT_DIR}")
-
-print("\n主要输出文件:")
-print(f"  1. climatology_plus_normalised.png  - 气候态图")
-print(f"  2. global_lag_summary.csv           - 全局最优滞后")
-print(f"  3. aligned_data.csv                 - 时间对齐数据")
-print(f"  4. tide_pot_summary.csv             - 潮汐POT摘要")
-print(f"  5. flow_pot_summary.csv             - 径流POT摘要")
-print(f"  6. pot_combined_summary.csv         - 综合对比表")
-print(f"  7. tide_events_q*.csv               - 潮汐事件详情")
-print(f"  8. flow_events_q*.csv               - 径流事件详情")
-
-print("\n运行方式:")
-print("  python -m src.main")
-print("  或")
-print("  python src/main.py")
+dataset = cd.run_dataset_construction(
+    target_df=wl,
+    driver_dfs={
+        'tide': tide,
+        'flow': flow
+    },
+    output_dir=OUTPUT_DIR,
+    pot_summary_files={
+        'tide': 'tide_pot_summary.csv',
+        'flow': 'flow_pot_summary.csv'
+    },
+    target_quantile=0.95,      # Default Q95
+    quantile_preference="events",  # Prioritize events if Q95 not available
+    extraction_method="max",    # Use maximum values
+    min_separation_days=3,
+    save_dataset=True          # Auto-save the dataset
+)
