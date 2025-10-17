@@ -8,6 +8,7 @@ try:
     from . import plot as cplots
     from . import lag as clag
     from . import dataset as cd
+    from . import dependence as dep
 except Exception:
     # mode 2: run as script -> python src/main.py
     ROOT = Path(__file__).resolve().parents[1]  # project root
@@ -17,6 +18,7 @@ except Exception:
     from src import plot as cplots
     from src import lag as clag
     from src import dataset as cd
+    from src import dependence as dep
 
 # Paths
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -229,3 +231,17 @@ dataset = cd.run_dataset_construction(
     min_separation_days=3,
     save_dataset=True          # Auto-save the dataset
 )
+
+dep_cols = [c for c in dataset.columns if c.endswith("_value")]
+extreme_df = dataset[dep_cols].dropna().reset_index(drop=True)
+corrs = dep.pairwise_corr(extreme_df, dep_cols, methods=("spearman","kendall"))
+for name, summ in corrs.items():
+    summ.matrix.to_csv(OUTPUT_DIR / f"corr_{name}.csv", float_format="%.6f")
+
+U = dep.pseudo_observations(extreme_df, dep_cols)
+U.to_csv(OUTPUT_DIR / f"pseudo_observations_{'-'.join(dep_cols)}.csv", index=False)
+
+vine = dep.fit_cvine(U)
+print(vine)
+with open(OUTPUT_DIR / "vine_summary.txt","w") as f:
+        f.write(f"cols={vine.cols}\nstructure={vine.structure}\nAIC={vine.aic:.3f}, BIC={vine.bic:.3f}\n")
